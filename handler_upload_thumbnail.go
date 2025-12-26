@@ -2,11 +2,13 @@ package main
 
 import (
 	"database/sql"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -42,18 +44,43 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	file, header, err := r.FormFile("thumbnail")
+	fileIn, header, err := r.FormFile("thumbnail")
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Couldn't get file", err)
 		return
 	}
-	defer file.Close()
+	defer fileIn.Close()
 
-	contentType := header.Header.Get("Content-Type")
-
-	data, err := io.ReadAll(file)
+	mediatype, _, err := mime.ParseMediaType(header.Header.Get("Content-Type"))
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Couldn't read file", err)
+		respondWithError(w, http.StatusBadRequest, "Couldn't parse multipart form", err)
+		return
+	}
+
+	if mediatype != "image/jpeg" && mediatype != "image/png" {
+		respondWithError(w, http.StatusBadRequest, "Unsupported media type", err)
+		return
+	}
+
+	fileExtensions, err := mime.ExtensionsByType(mediatype)
+	if err != nil || len(fileExtensions) == 0 {
+		respondWithError(w, http.StatusBadRequest, "Unsupported file type", err)
+		return
+	}
+
+	fileName := fmt.Sprintf("%s%s", videoID, fileExtensions[0])
+	filePath := filepath.Join(cfg.assetsRoot, fileName)
+
+	fileOut, err := os.Create(filePath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't create file", err)
+		return
+	}
+	defer fileOut.Close()
+
+	_, err = io.Copy(fileOut, fileIn)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't write file", err)
 		return
 	}
 
@@ -70,8 +97,8 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	dataURL := fmt.Sprintf("data:%s;base64,%s", contentType, base64.StdEncoding.EncodeToString(data))
-	video.ThumbnailURL = &dataURL
+	thumbnailURL := fmt.Sprintf("http://localhost:%s/assets/%s", cfg.port, fileName)
+	video.ThumbnailURL = &thumbnailURL
 
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {
