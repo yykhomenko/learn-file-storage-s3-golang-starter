@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -36,7 +38,6 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	fmt.Println("uploading thumbnail for video", videoID, "by user", userID)
 
-	// TODO: implement the upload here
 	const maxMemory = 10 << 20
 	err = r.ParseMultipartForm(maxMemory)
 	if err != nil {
@@ -68,7 +69,16 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	fileName := fmt.Sprintf("%s%s", videoID, fileExtensions[0])
+	randomBytes := make([]byte, 32)
+	n, err := rand.Read(randomBytes)
+	if err != nil || n != 32 {
+		respondWithError(w, http.StatusBadRequest, "Couldn't generate random name", err)
+		return
+	}
+
+	randomName := base64.RawURLEncoding.EncodeToString(randomBytes)
+
+	fileName := fmt.Sprintf("%s%s", randomName, fileExtensions[0])
 	filePath := filepath.Join(cfg.assetsRoot, fileName)
 
 	fileOut, err := os.Create(filePath)
