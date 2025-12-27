@@ -118,6 +118,23 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	ctx, processCancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	defer processCancel()
+
+	processedFileName, err := processVideoForFastStart(ctx, tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't process video", err)
+		return
+	}
+
+	processedFile, err := os.Open(processedFileName)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't open processed file", err)
+		return
+	}
+	defer os.Remove(processedFile.Name())
+	defer processedFile.Close()
+
 	var prefix string
 	switch ratio {
 	case "16:9":
@@ -141,7 +158,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	params := &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &s3FileName,
-		Body:        tempFile,
+		Body:        processedFile,
 		ContentType: &mediatype,
 	}
 
@@ -168,7 +185,12 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 
 func getVideoAspectRatio(ctx context.Context, filePath string) (string, error) {
 
-	cmd := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-print_format", "json", "-show_streams", filePath)
+	cmd := exec.CommandContext(ctx,
+		"ffprobe",
+		"-v", "error",
+		"-print_format", "json",
+		"-show_streams",
+		filePath)
 
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
@@ -209,6 +231,29 @@ func getVideoAspectRatio(ctx context.Context, filePath string) (string, error) {
 	}
 
 	return "", errors.New("no video stream found")
+}
+
+func processVideoForFastStart(ctx context.Context, filePath string) (string, error) {
+
+	processingPath := filePath + ".processing"
+
+	cmd := exec.CommandContext(ctx,
+		"ffmpeg",
+		"-i", filePath,
+		"-c", "copy",
+		"-movflags", "faststart",
+		"-f", "mp4",
+		processingPath)
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		return "", fmt.Errorf("ffmpeg error: %v, details: %s", err, stderr.String())
+	}
+
+	return processingPath, nil
 }
 
 type FFProbeOutput struct {
