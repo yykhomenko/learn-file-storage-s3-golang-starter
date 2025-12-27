@@ -250,7 +250,7 @@ func processVideoForFastStart(ctx context.Context, filePath string) (string, err
 
 	err := cmd.Run()
 	if err != nil {
-		return "", fmt.Errorf("ffmpeg error: %v, details: %s", err, stderr.String())
+		return "", fmt.Errorf("ffmpeg error: %w, details: %s", err, stderr.String())
 	}
 
 	return processingPath, nil
