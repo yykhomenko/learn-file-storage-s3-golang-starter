@@ -15,12 +15,10 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
-	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
 	"github.com/google/uuid"
 )
 
@@ -173,7 +171,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	videoURL := fmt.Sprintf("%s,%s", cfg.s3Bucket, s3FileName)
+	videoURL := fmt.Sprintf("%s/%s", cfg.s3CfDistribution, s3FileName)
 	video.VideoURL = &videoURL
 
 	err = cfg.db.UpdateVideo(video)
@@ -182,41 +180,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	signedCtx, signedCancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer signedCancel()
-
-	signedVideo, err := cfg.dbVideoToSignedVideo(signedCtx, video)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't sign video", err)
-		return
-	}
-
-	respondWithJSON(w, http.StatusOK, signedVideo)
-}
-
-func (cfg *apiConfig) dbVideoToSignedVideo(ctx context.Context, video database.Video) (database.Video, error) {
-
-	if video.VideoURL == nil {
-		return video, nil
-	}
-
-	params := strings.Split(*video.VideoURL, ",")
-	if len(params) != 2 {
-		return database.Video{}, errors.New("invalid video url")
-	}
-
-	bucket := params[0]
-	key := params[1]
-	expireTime := 1 * time.Hour
-
-	url, err := generatePresignedURL(ctx, cfg.s3Client, bucket, key, expireTime)
-	if err != nil {
-		return database.Video{}, fmt.Errorf("couldn't generate presigned url: %w", err)
-	}
-
-	video.VideoURL = &url
-
-	return video, nil
+	respondWithJSON(w, http.StatusOK, video)
 }
 
 func getVideoAspectRatio(ctx context.Context, filePath string) (string, error) {
@@ -290,20 +254,6 @@ func processVideoForFastStart(ctx context.Context, filePath string) (string, err
 	}
 
 	return processingPath, nil
-}
-
-func generatePresignedURL(ctx context.Context, s3Client *s3.Client, bucket, key string, expireTime time.Duration) (string, error) {
-
-	pClient := s3.NewPresignClient(s3Client)
-	params := &s3.GetObjectInput{Bucket: &bucket, Key: &key}
-	opt := s3.WithPresignExpires(expireTime)
-
-	req, err := pClient.PresignGetObject(ctx, params, opt)
-	if err != nil {
-		return "", fmt.Errorf("couldn't generate presigned url: %w", err)
-	}
-
-	return req.URL, nil
 }
 
 type FFProbeOutput struct {
